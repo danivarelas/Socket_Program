@@ -3,53 +3,52 @@ from time import sleep
 import socket
 import sys
 
-# Current node's IP
-ROUTER_IP = '10.1.130.166' #''192.168.0.105'  # '140.90.0.30'
+# IP actual del enrutador
+ROUTER_IP = '10.1.0.1' # '140.90.0.30'
 LOCALHOST = '127.0.0.1'
 
-#puertos locales del router
+# Puerto con el que se comunican los nodos de la red
 BOLINCHAS_PORT = 2424
+# Puerto con el que se comunica el enrutador con paletas
 PALETAS_PORT = 10004
 
-IP_PALETAS = '10.1.130.1'
+# IP y puerto del enrutador paletas
+IP_PALETAS = '10.1.0.3'
 NODE_PALETAS_PORT = 10003
 
+# Direccion fisica dentro de la red
 DIR_FISICA = 'Bolinchas.Daniel'
 
-#Socket buffer
+# Socket buffer para almacenar el mensaje
 BUFFER_SIZE = 1024
 
-# Dispatcher's IP
-DISPATCHER_IP_BOLINCHAS = '10.1.131.18'
+# IP y puerto del dispatcher
+DISPATCHER_IP_BOLINCHAS = '10.1.0.4'
 DISPATCHER_PORT_BOLINCHAS = 1024
 
-# Array of other computers on net
-ARP_TABLE = []
-
+# Tabla de enrutamiento
 ROUTING_TABLE = ["Paletas;200.5.0.0;Directo;0","Bolinchas;140.90.0.0;Directo;0",
                  "Legos;201.6.0.0;KevinL;1","Luces;25.0.0.0;KevinL;2",
                  "Banderas;12.0.0.0;KevinM;1","Carritos;165.8.0.0;KevinM;2"]
 
-
+# Cache local de las conexiones dentro de la red
 CACHE_BOLINCHAS = []
 
 # Inicializa el socket servidor que envia a paletas
 socket_paletas = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 socket_paletas.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-print('Pallets server loop created')
+print('Paletas server loop created')
 
 try:
-    #socket_paletas.bind((ROUTER_IP, BOLINCHAS_PORT))
     socket_paletas.bind(('', BOLINCHAS_PORT))
-    print('Pallets Socket bind complete')
+    print('Socket paletas bind complete')
 
 except socket.error as msg:
-    print('Pallets bind failed. Error : ' + str(sys.exc_info()))
+    print('Paletas bind failed. Error : ' + str(sys.exc_info()))
     sys.exit()
 
-# Start listening on socket
 socket_paletas.listen(10)
-print('Pallets interface now listening')
+print('Paletas interface now listening')
 
 # Inicializa el socket recibe de paletas y envia a bolinchas
 socket_bolinchas = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -58,44 +57,44 @@ print('Bolinchas server loop created')
 
 try:
     socket_bolinchas.bind(('', PALETAS_PORT))
-    print('Bolinchas bind complete')
+    print('Bolinchas socket bind complete')
 
 except socket.error as msg:
     print('Bolinchas bind failed. Error : ' + str(sys.exc_info()))
     sys.exit()
 
-# Start listening on socket
 socket_bolinchas.listen(10)
 print('Bolinchas interface now listening')
 
-
+# Metodo main del programa
 def main():
     router = Router()
     router.start()
+
     try:
         join_threads(router.threads)
+
     except KeyboardInterrupt:
         print ("\nKeyboardInterrupt catched.")
         print ("Terminate main thread.")
         print ("If only daemonic threads are left, terminate whole program.")
 
-
+# Clase Router que maneja la estructura del enrutador
 class Router(object):
     def __init__(self):
         self.running = True
         self.threads = []
 
     def start(self):
-        # Create a TCP/IP socket
+        # Crear el socket para conectarse con el dispatcher
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-        # Connect the socket to the port where the server is listening
         server_address = (DISPATCHER_IP_BOLINCHAS, DISPATCHER_PORT_BOLINCHAS)
         print('Connecting to {} port {}'.format(*server_address))
 
         try:
             sock.connect(server_address)
-            # Send data
+            # Envia la direccion IP, fisica y el puerto para que las demas
+            # conexiones lo conozcan
             addr_info = DIR_FISICA + ';' + ROUTER_IP + ';' + str(BOLINCHAS_PORT)
             print (addr_info)
             message = addr_info.encode()
@@ -110,13 +109,11 @@ class Router(object):
             print('Closing socket\n')
             sock.close()
 
-        # Thread que escucha las solicitudess
+        # Thread que escucha las conexiones de paletas
         t1 = threading.Thread(target=self.receive_data)
-
-        # Thread que manda los datos
+        # Thread que manda los a paletas desde bolinchas o maneja los broadcasts
         t2 = threading.Thread(target=self.send_data)
-
-        # Thread que revisa el dispatcher
+        # Thread que revisa el dispatcher por nuevas conexiones
         t3 = threading.Thread(target=self.call_dispatcher)
 
         # Make threads daemonic, i.e. terminate them when main thread
@@ -135,13 +132,6 @@ class Router(object):
         sleep(1)
         t3.start()
         sleep(1)
-        # self.send_to_george('165.8.2.0','hola')
-        # self.send_to_george('200.5.0.2', 'bebe')
-        # self.send_to_george('201.6.0.2', 'adios')
-        # self.send_to_george('12.0.0.8', 'juju')
-        prueba = '165;8;2;0;200;5;0;2;0;0;0;0;0;Hola paletas'
-        self.send_to_paletas(prueba.encode())
-
 
     # Consulta al dispatcher por las conexiones de la red
     def call_dispatcher(self):
@@ -150,44 +140,47 @@ class Router(object):
             self.check_dispatcher("Bolinchas.Jorge")
             sleep(30)
 
-    # Loop que recibe los datos y los manda a la red local de bolinchas
+    # Ciclo que recibe los datos de paletas y los manda a la red local de bolinchas
     def receive_data(self):
 
-        # this will make an infinite loop needed for
-        # not reseting server for every client
+        # Ciclo infinito para no reiniciarse con cada conexion de un cliente
         while (self.running):
 
-            # Wait for a connection
+            # Se espera por una conexion
             print('Bolinchas interface waiting for connection with paletas')
             connection, client_address = socket_bolinchas.accept()
 
             try:
                 print('Bolinchas received connection from', client_address)
 
-                # Receive the packet and send it to the next network
+                # Recibe el paquete y lo envia a la red interna
                 while True:
-
                     data = connection.recv(BUFFER_SIZE)
+
                     if data:
                         print(data.decode())
                         params = data.decode().split(';')
+
+                        #Arma el mensaje recibido de paletas en lenguaje bolinchas
                         if len(params):
                             ip_inicio = params[0]
                             ip_final = params[1]
                             mensaje = params[4]
-                            # TODO enviar a la red local
+
                             #Revisar si va para la red o si lo envia al otro router
                             if self.msg_to_network(ip_final):
                                 dir_fisica_dest = "Bolinchas.Jorge"
                             else:
                                 dir_fisica_dest = "Bolinchas.Kevin"
 
+                            # Busca los datos de la conexion en la cache local
                             dir_bolincha = self.check_cache_bolinchas(dir_fisica_dest)
+
                             if dir_bolincha:
                                 ip_bolincha = dir_bolincha[1]
                                 port = int(dir_bolincha[2])
 
-                                # formato de mensaje =
+                                # Da formato de mensaje en bolinchas =
                                 # dir_fisica_fuente ; dir_fisica_dest ; ip_inicio ; ip_final ; msg
                                 msg_final = DIR_FISICA + ";" + dir_fisica_dest + ";"\
                                             + ip_inicio + ";" + ip_final + ";" + mensaje
@@ -200,6 +193,7 @@ class Router(object):
 
                     else:
                         print('no data from', client_address)
+
                     break
 
             except:
@@ -208,75 +202,89 @@ class Router(object):
                 traceback.print_exc()
 
             finally:
-                # Clean up the connection
                 print ("\n")
 
         print('Closing socket')
         socket_bolinchas.close()
 
-    # Loop que recibe de la red local y envia las solicitudes al socket que habla paletas
-    # o envia de vuelta la informacion requerida si es broadcast
+    # Ciclo que recibe del dispatcher y de la red local y envia las solicitudes al socket
+    # que habla paletas o envia de vuelta la informacion requerida si es broadcast
     def send_data(self):
 
-        # this will make an infinite loop needed for
-        # not reseting server for every client
+        # Ciclo infinito para no reiniciarse con cada conexion de un cliente
         while (self.running):
 
-            # Wait for a connection
+            # Espera por una conexion con la red de bolinchas
             print('Waiting for connection with Bolinchas')
             connection, client_address = socket_paletas.accept()
 
             try:
                 print('Connection from', client_address)
 
-                # Receive the packet and send it to the next network
+                # Recibe el paquete y decide que hacer con el
                 while True:
-
                     data = connection.recv(BUFFER_SIZE)
+
                     if data:
                         print("Mensaje recibido: " + data.decode())
                         params = data.decode().split(';')
-                        if len(params):
 
+                        if len(params):
                             broadcast = self.isBroadcast(params[1])
 
+                            # Revisa si el paquete es un broadcast de la red o no
                             if broadcast:
-                                print 'Entro broadcast'
+                                print 'Entro broadcast, respondiendo...'
                                 # dir fisica sender = params[0]
                                 # dir broadcast * = params[1]
                                 # IP solicitada = params[2]
                                 network = self.check_Network(params[2])
-                                print network
+                                print 'Red solicitada: ', network
                                 distance = -1
+
+                                # Busca la red solicitada en la tabla de enrutamiento
                                 for x in ROUTING_TABLE:
                                     elements = x.split(';')
+
                                     if network in elements:
                                         distance = elements[3]
                                         break
+
+                                # Busca la direccion de donde recibio el mensaje para
+                                # dar la respuesta solicitada
                                 dir_bolincha = self.check_cache_bolinchas(params[0])
+
+                                # Envia la respuesta con el formato establecido
                                 if dir_bolincha:
                                     ip_bolincha = dir_bolincha[1]
                                     port = int(dir_bolincha[2])
                                     msg_bc = DIR_FISICA + ';*;' + params[2] + ';' + str(distance)
                                     self.send_to_bolinchas(msg_bc,ip_bolincha,port)
+
                             else:
+
+                                # Recibe un paquete del dispatcher con la direccion
+                                # de una nueva conexion y la guarda si no existe
                                 if len(params) == 3:
                                     addr = params[0] + ';' + params[1] + ';' + params[2]
                                     exists = addr in CACHE_BOLINCHAS
+
                                     if not exists:
                                         CACHE_BOLINCHAS.append(addr)
-                                    # for x in CACHE_BOLINCHAS:
-                                    #     red_local = x.split(';')
-                                    #     print red_local[0] + red_local[1] + red_local[2]
+
+                                # No recibe ninguna conexion del dispatcher
                                 elif len(params) == 2:
                                     sleep(1)
+
+                                # Recibe el mensaje para enviarlo a paletas
                                 else:
                                     # dir fisica sender = params[0]
                                     # dir fisica reciever = params[1]
                                     # IP inicio = params[2]
                                     # IP final = params[3]
                                     # Mensaje = params[4]
-                                    # TODO transformar msj bolincha en msj paleta
+
+                                    # Construye el mensaje en un formato que pueda interpretar paletas
                                     action = 0
                                     ip_inicio = params[2].split('.')
                                     ip_final = params[3].split('.')
@@ -289,13 +297,14 @@ class Router(object):
                                                  ";" + ip_action[2] + ";" + ip_action[3] + ";" + msg_red
                                     print("El msj en paleta seria:")
                                     print(msg_paleta)
-
-                                    # TODO terminar de armar el string del puerto + ip
                                     self.send_to_paletas(msg_paleta)
+
                         else:
                             print('no data from', client_address)
+
                     else:
                         print('no data from', client_address)
+
                     break
 
             except:
@@ -304,121 +313,140 @@ class Router(object):
                 traceback.print_exc()
 
             finally:
-                # Clean up the connection
                 print ("\n")
 
         print('Closing socket??')
         socket_paletas.close()
 
+    # Metodo para crear socket cliente a la red local y enviar el mensaje
     def send_to_bolinchas(self, msg, ip, port):
         mensaje = ''
         client_bolinchas = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_bolinchas.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
         try:
             print 'Enviando mensaje a bolinchas'
             client_bolinchas.connect((ip, port))
             mensaje = msg.encode()
             client_bolinchas.send(mensaje)
+
         except Exception as e:
             print("Something's wrong with %s:%d."
                   "\nException is %s" % (ip, port, e))
+
         finally:
             print 'Mensaje enviado: ' + mensaje
             client_bolinchas.close()
 
+    # Metodo para crear socket cliente a la red de paletas y enviar el mensaje
     def send_to_paletas(self, msg):
         client_bolinchas = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_bolinchas.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
         try:
             client_bolinchas.connect((IP_PALETAS, NODE_PALETAS_PORT))
             client_bolinchas.send(msg.encode())
+            print 'Mensaje enviado'
+
         except Exception as e:
             print("Something's wrong with %s:%d."
                   "\nException is %s" % (IP_PALETAS, NODE_PALETAS_PORT, e))
+
         finally:
-            print 'Mensaje enviado'
             client_bolinchas.close()
 
-
+    # Metodo para verificar si la red final es la local o no
     def msg_to_network(self, ip):
         decodedIP = ip.split('.')
+
         if len(decodedIP):
             if (int(decodedIP[0]) == 140) and ((int(decodedIP[1]) == 90)):
                 print('Mensaje para la red local')
                 return True
+
             else:
                 print('Mensaje para red exterior')
                 return False
+
         else:
             print('No data found')
 
-    def send_to_george(self,stringip,msj):
-        client_bolinchas = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client_bolinchas.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            client_bolinchas.connect(('192.168.0.109', 2015))
-            solicitud = "Bolinchas.Daniel;Bolinchas.Jorge;" + stringip+";140.90.0.20;"+msj
-            client_bolinchas.send(solicitud)
-        except Exception as e:
-            print("Something's wrong with %s:%d."
-                  "\nException is %s" % ('192.168.0.109', 2015, e))
-        finally:
-            client_bolinchas.close()
-
+    # Metodo para revisar la cache local y devuelve la conexion si la encontro
     def check_cache_bolinchas(self, dir_fisica):
         found = False
+
         if CACHE_BOLINCHAS:
             print 'Buscando en cache local'
+
             for x in CACHE_BOLINCHAS:
                 item = x.split(';')
+
                 if item[0] == dir_fisica:
                     found = True
                     break
+
             if found:
                 return item
+
         else:
             return -1
 
+    # Metodo para solicitar la tabla cache al dispatcher y obtener nuevas conexiones
     def check_dispatcher(self, dir_fisica):
         client_bolinchas = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_bolinchas.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
         try:
             client_bolinchas.connect((DISPATCHER_IP_BOLINCHAS, DISPATCHER_PORT_BOLINCHAS))
             solicitud = dir_fisica + ';*'
             client_bolinchas.send(solicitud)
+
         except Exception as e:
             print("Something's wrong with %s:%d."
                   "\nException is %s" % (DISPATCHER_IP_BOLINCHAS, DISPATCHER_PORT_BOLINCHAS, e))
+
         finally:
             client_bolinchas.close()
 
+    # Metodo para consultar si el mensaje indicado es de broadcast o no
     def isBroadcast(self,tipo):
         broadcast = False
         if tipo == '*':
             broadcast = True
+
         else:
             broadcast = False
+
         return broadcast
 
+    # Metodo para determinar a cual red va dirigido el mensaje
     def check_Network(self, ip):
         ip_numbers = ip.split('.')
         clase = ''
         network = ''
         network_type = int(ip_numbers[0])
+
         if network_type >= 0 and network_type < 128:
             clase = 'A'
+
         elif network_type >= 128 and network_type < 192:
             clase = 'B'
+
         elif network_type >= 192 and network_type < 224:
             clase = 'C'
+
         if clase == 'A':
             network = ip_numbers[0] +'.0.0.0'
+
         elif clase == 'B':
             network = ip_numbers[0] + '.' + ip_numbers[1] + '.0.0'
+
         elif clase == 'C':
             network = ip_numbers[0] + '.' + ip_numbers[1] + '.' + ip_numbers[2] + '.0'
+
         return network
 
+# Metodo para unir los threads del programa
 def join_threads(threads):
     for t in threads:
         while t.isAlive():
