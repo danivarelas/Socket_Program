@@ -34,6 +34,12 @@ ROUTING_TABLE = ["Paletas;200.5.0.0;Directo;0","Bolinchas;140.90.0.0;Directo;0",
 # Cache local de las conexiones dentro de la red
 CACHE_BOLINCHAS = []
 
+# Cola de mensajes recibidos desde bolinchas
+MENSAJES_BOLINCHAS = []
+
+# Cola de mensajes recibidos desde paletas
+MENSAJES_PALETAS = []
+
 # Inicializa el socket servidor que envia a paletas
 socket_paletas = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 socket_paletas.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -134,11 +140,11 @@ class Router(object):
         sleep(1)
 
     # Consulta al dispatcher por las conexiones de la red
-    def call_dispatcher(self):
-        while self.running and len(CACHE_BOLINCHAS) < 2:
-            self.check_dispatcher("Bolinchas.Kevin")
-            self.check_dispatcher("Bolinchas.Jorge")
-            sleep(30)
+    # def call_dispatcher(self):
+    #     while self.running and len(CACHE_BOLINCHAS) < 2:
+    #         self.check_dispatcher("Bolinchas.Kevin")
+    #         self.check_dispatcher("Bolinchas.Jorge")
+    #         sleep(30)
 
     # Ciclo que recibe los datos de paletas y los manda a la red local de bolinchas
     def receive_data(self):
@@ -159,24 +165,29 @@ class Router(object):
 
                     if data:
                         print(data.decode())
-                        params = data.decode().split(';')
+                        msj_recibido = data.decode()
+                        MENSAJES_PALETAS.append(msj_recibido)
+                        msj_procesar = MENSAJES_PALETAS.pop(0)
+                        params = msj_procesar.decode().split(';')
 
-                        #Arma el mensaje recibido de paletas en lenguaje bolinchas
+                        # Arma el mensaje recibido de paletas en lenguaje bolinchas
                         if len(params):
                             ip_inicio = params[0]
                             ip_final = params[1]
                             mensaje = params[4]
 
-                            #Revisar si va para la red o si lo envia al otro router
+                            # Revisar si va para la red o si lo envia al otro router
                             if self.msg_to_network(ip_final):
-                                dir_fisica_dest = "Bolinchas.Jorge"
+                                # Busca los datos de la conexion en la cache local
+                                dir_bolincha = self.check_cache_ip(ip_final)
+                                dir_fisica_dest = dir_bolincha[3]
                             else:
                                 dir_fisica_dest = "Bolinchas.Kevin"
 
                             # Busca los datos de la conexion en la cache local
                             dir_bolincha = self.check_cache_bolinchas(dir_fisica_dest)
 
-                            if dir_bolincha:
+                            if dir_bolincha != -1:
                                 ip_bolincha = dir_bolincha[1]
                                 port = int(dir_bolincha[2])
 
@@ -187,7 +198,8 @@ class Router(object):
                                 print("El msj en bolinchas seria:")
                                 print(msg_final)
                                 self.send_to_bolinchas(msg_final, ip_bolincha, port)
-
+                            else:
+                                print 'No se pudo conectar al nodo'
                         else:
                             print('no data from', client_address)
 
@@ -227,7 +239,10 @@ class Router(object):
 
                     if data:
                         print("Mensaje recibido: " + data.decode())
-                        params = data.decode().split(';')
+                        msj_recibido = data.decode()
+                        MENSAJES_BOLINCHAS.append(msj_recibido)
+                        msj_procesar = MENSAJES_BOLINCHAS.pop(0)
+                        params = msj_procesar.decode().split(';')
 
                         if len(params):
                             broadcast = self.isBroadcast(params[1])
@@ -262,15 +277,19 @@ class Router(object):
                                     self.send_to_bolinchas(msg_bc,ip_bolincha,port)
 
                             else:
-
                                 # Recibe un paquete del dispatcher con la direccion
                                 # de una nueva conexion y la guarda si no existe
-                                if len(params) == 3:
-                                    addr = params[0] + ';' + params[1] + ';' + params[2]
-                                    exists = addr in CACHE_BOLINCHAS
-
-                                    if not exists:
+                                if len(params) == 4:
+                                    addr = params[0] + ';' + params[1] + ';' + params[2] + ';' + params[3]
+                                    found = False
+                                    for x in CACHE_BOLINCHAS:
+                                        elems = x.split(';')
+                                        if elems[0] == params[0]:
+                                            found = True
+                                            CACHE_BOLINCHAS[x] = addr
+                                    if not found:
                                         CACHE_BOLINCHAS.append(addr)
+
 
                                 # No recibe ninguna conexion del dispatcher
                                 elif len(params) == 2:
@@ -284,20 +303,37 @@ class Router(object):
                                     # IP final = params[3]
                                     # Mensaje = params[4]
 
-                                    # Construye el mensaje en un formato que pueda interpretar paletas
-                                    action = 0
-                                    ip_inicio = params[2].split('.')
-                                    ip_final = params[3].split('.')
-                                    ip_action = ["0","0","0","0"]
-                                    msg_red = params[4]
-                                    msg_paleta = ip_inicio[0] + ";" + ip_inicio[1] + ";" + ip_inicio[2] +\
-                                                 ";" + ip_inicio[3] + ";" + ip_final[0] + ";" + \
-                                                 ip_final[1] + ";" + ip_final[2] + ";" + ip_final[3] +\
-                                                 ";" + str(action) + ";" + ip_action[0] + ";" + ip_action[1] +\
-                                                 ";" + ip_action[2] + ";" + ip_action[3] + ";" + msg_red
-                                    print("El msj en paleta seria:")
-                                    print(msg_paleta)
-                                    self.send_to_paletas(msg_paleta)
+                                    if self.msg_to_network(params[3]):
+                                        dir_bolincha = self.check_cache_ip(params[3])
+
+                                        if dir_bolincha:
+                                            ip_bolincha = dir_bolincha[1]
+                                            port = int(dir_bolincha[2])
+                                            dir_fisica_dest = dir_bolincha[0]
+
+                                            # Da formato de mensaje en bolinchas =
+                                            # dir_fisica_fuente ; dir_fisica_dest ; ip_inicio ; ip_final ; msg
+                                            msg_final = DIR_FISICA + ";" + dir_fisica_dest + ";" \
+                                                        + params[2] + ";" + params[3] + ";" + params[4]
+                                            print("El msj en bolinchas seria:")
+                                            print(msg_final)
+                                            self.send_to_bolinchas(msg_final, ip_bolincha, port)
+
+                                    else:
+                                        # Construye el mensaje en un formato que pueda interpretar paletas
+                                        action = 0
+                                        ip_inicio = params[2].split('.')
+                                        ip_final = params[3].split('.')
+                                        ip_action = ["0","0","0","0"]
+                                        msg_red = params[4]
+                                        msg_paleta = ip_inicio[0] + ";" + ip_inicio[1] + ";" + ip_inicio[2] +\
+                                                     ";" + ip_inicio[3] + ";" + ip_final[0] + ";" + \
+                                                     ip_final[1] + ";" + ip_final[2] + ";" + ip_final[3] +\
+                                                     ";" + str(action) + ";" + ip_action[0] + ";" + ip_action[1] +\
+                                                     ";" + ip_action[2] + ";" + ip_action[3] + ";" + msg_red
+                                        print("El msj en paleta seria:")
+                                        print(msg_paleta)
+                                        self.send_to_paletas(msg_paleta)
 
                         else:
                             print('no data from', client_address)
@@ -323,17 +359,14 @@ class Router(object):
         mensaje = ''
         client_bolinchas = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_bolinchas.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
         try:
             print 'Enviando mensaje a bolinchas'
             client_bolinchas.connect((ip, port))
             mensaje = msg.encode()
             client_bolinchas.send(mensaje)
-
         except Exception as e:
             print("Something's wrong with %s:%d."
                   "\nException is %s" % (ip, port, e))
-
         finally:
             print 'Mensaje enviado: ' + mensaje
             client_bolinchas.close()
@@ -342,32 +375,26 @@ class Router(object):
     def send_to_paletas(self, msg):
         client_bolinchas = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_bolinchas.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
         try:
             client_bolinchas.connect((IP_PALETAS, NODE_PALETAS_PORT))
             client_bolinchas.send(msg.encode())
             print 'Mensaje enviado'
-
         except Exception as e:
             print("Something's wrong with %s:%d."
                   "\nException is %s" % (IP_PALETAS, NODE_PALETAS_PORT, e))
-
         finally:
             client_bolinchas.close()
 
     # Metodo para verificar si la red final es la local o no
     def msg_to_network(self, ip):
         decodedIP = ip.split('.')
-
         if len(decodedIP):
             if (int(decodedIP[0]) == 140) and ((int(decodedIP[1]) == 90)):
                 print('Mensaje para la red local')
                 return True
-
             else:
                 print('Mensaje para red exterior')
                 return False
-
         else:
             print('No data found')
 
@@ -377,17 +404,27 @@ class Router(object):
 
         if CACHE_BOLINCHAS:
             print 'Buscando en cache local'
-
             for x in CACHE_BOLINCHAS:
                 item = x.split(';')
-
-                if item[0] == dir_fisica:
+                if dir_fisica in item:
                     found = True
                     break
-
             if found:
                 return item
+        else:
+            return -1
 
+    def check_cache_ip(self, ip):
+        found = False
+        if CACHE_BOLINCHAS:
+            print 'Buscando en cache local'
+            for x in CACHE_BOLINCHAS:
+                item = x.split(';')
+                if ip in item:
+                    found = True
+                    break
+            if found:
+                return item
         else:
             return -1
 
@@ -395,16 +432,13 @@ class Router(object):
     def check_dispatcher(self, dir_fisica):
         client_bolinchas = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_bolinchas.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
         try:
             client_bolinchas.connect((DISPATCHER_IP_BOLINCHAS, DISPATCHER_PORT_BOLINCHAS))
             solicitud = dir_fisica + ';*'
             client_bolinchas.send(solicitud)
-
         except Exception as e:
             print("Something's wrong with %s:%d."
                   "\nException is %s" % (DISPATCHER_IP_BOLINCHAS, DISPATCHER_PORT_BOLINCHAS, e))
-
         finally:
             client_bolinchas.close()
 
@@ -413,10 +447,8 @@ class Router(object):
         broadcast = False
         if tipo == '*':
             broadcast = True
-
         else:
             broadcast = False
-
         return broadcast
 
     # Metodo para determinar a cual red va dirigido el mensaje
@@ -425,25 +457,18 @@ class Router(object):
         clase = ''
         network = ''
         network_type = int(ip_numbers[0])
-
         if network_type >= 0 and network_type < 128:
             clase = 'A'
-
         elif network_type >= 128 and network_type < 192:
             clase = 'B'
-
         elif network_type >= 192 and network_type < 224:
             clase = 'C'
-
         if clase == 'A':
             network = ip_numbers[0] +'.0.0.0'
-
         elif clase == 'B':
             network = ip_numbers[0] + '.' + ip_numbers[1] + '.0.0'
-
         elif clase == 'C':
             network = ip_numbers[0] + '.' + ip_numbers[1] + '.' + ip_numbers[2] + '.0'
-
         return network
 
 # Metodo para unir los threads del programa
