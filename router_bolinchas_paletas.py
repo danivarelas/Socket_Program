@@ -4,41 +4,38 @@ import socket
 import sys
 
 # IP actual del enrutador
-ROUTER_IP = '10.1.0.1' # '140.90.0.30'
+ROUTER_IP = '' #
+FAKE_IP = '140.90.0.30'
 LOCALHOST = '127.0.0.1'
-
 # Puerto con el que se comunican los nodos de la red
-BOLINCHAS_PORT = 2424
-# Puerto con el que se comunica el enrutador con paletas
+BOLINCHAS_PORT = 0
+# Puerto con el que se comunica el enrutador paletas
 PALETAS_PORT = 10004
-
-# IP y puerto del enrutador paletas
+# IP y puerto del enrutador paletas para conectarse
 IP_PALETAS = '10.1.0.3'
 NODE_PALETAS_PORT = 10003
-
 # Direccion fisica dentro de la red
 DIR_FISICA = 'Bolinchas.Daniel'
-
 # Socket buffer para almacenar el mensaje
 BUFFER_SIZE = 1024
-
 # IP y puerto del dispatcher
-DISPATCHER_IP_BOLINCHAS = '10.1.0.4'
-DISPATCHER_PORT_BOLINCHAS = 1024
-
+DISPATCHER_IP_BOLINCHAS = ''
+DISPATCHER_PORT_BOLINCHAS = 0
 # Tabla de enrutamiento
 ROUTING_TABLE = ["Paletas;200.5.0.0;Directo;0","Bolinchas;140.90.0.0;Directo;0",
                  "Legos;201.6.0.0;KevinL;1","Luces;25.0.0.0;KevinL;2",
                  "Banderas;12.0.0.0;KevinM;1","Carritos;165.8.0.0;KevinM;2"]
-
 # Cache local de las conexiones dentro de la red
 CACHE_BOLINCHAS = []
-
 # Cola de mensajes recibidos desde bolinchas
 MENSAJES_BOLINCHAS = []
-
 # Cola de mensajes recibidos desde paletas
 MENSAJES_PALETAS = []
+
+ROUTER_IP = raw_input('Digite su direccion IP: ')
+BOLINCHAS_PORT = int(raw_input('Digite el puerto para conexiones de su red: '))
+DISPATCHER_IP_BOLINCHAS = raw_input('Digite la direccion IP del dispatcher: ')
+DISPATCHER_PORT_BOLINCHAS = int(raw_input('Digite el puerto del dispatcher: '))
 
 # Inicializa el socket servidor que envia a paletas
 socket_paletas = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -101,7 +98,7 @@ class Router(object):
             sock.connect(server_address)
             # Envia la direccion IP, fisica y el puerto para que las demas
             # conexiones lo conozcan
-            addr_info = DIR_FISICA + ';' + ROUTER_IP + ';' + str(BOLINCHAS_PORT)
+            addr_info = DIR_FISICA + ';' + ROUTER_IP + ';' + str(BOLINCHAS_PORT) + ';' + FAKE_IP
             print (addr_info)
             message = addr_info.encode()
             print('Sending {!r}'.format(message))
@@ -120,24 +117,24 @@ class Router(object):
         # Thread que manda los a paletas desde bolinchas o maneja los broadcasts
         t2 = threading.Thread(target=self.send_data)
         # Thread que revisa el dispatcher por nuevas conexiones
-        t3 = threading.Thread(target=self.call_dispatcher)
+        # t3 = threading.Thread(target=self.call_dispatcher)
 
         # Make threads daemonic, i.e. terminate them when main thread
         # terminates. From: http://stackoverflow.com/a/3788243/145400
         t1.daemon = True
         t2.daemon = True
-        t3.daemon = True
+        # t3.daemon = True
 
         self.threads.append(t1)
         self.threads.append(t2)
-        self.threads.append(t3)
+        # self.threads.append(t3)
 
         t1.start()
         sleep(1)
         t2.start()
         sleep(1)
-        t3.start()
-        sleep(1)
+        # t3.start()
+        # sleep(1)
 
     # Consulta al dispatcher por las conexiones de la red
     # def call_dispatcher(self):
@@ -286,9 +283,17 @@ class Router(object):
                                         elems = x.split(';')
                                         if elems[0] == params[0]:
                                             found = True
-                                            CACHE_BOLINCHAS[x] = addr
+                                            CACHE_BOLINCHAS.remove(x)
+                                            CACHE_BOLINCHAS.append(addr)
+                                            break
                                     if not found:
                                         CACHE_BOLINCHAS.append(addr)
+
+                                    print "Direccion Fisica - Direccion IP - Puerto - IP Falsa"
+                                    for x in CACHE_BOLINCHAS:
+                                        elems = x.split(';')
+                                        print elems[0] + ' - ' + elems[1] + ' - ' + \
+                                              elems[2] + ' - ' + elems[3]
 
 
                                 # No recibe ninguna conexion del dispatcher
@@ -304,20 +309,23 @@ class Router(object):
                                     # Mensaje = params[4]
 
                                     if self.msg_to_network(params[3]):
-                                        dir_bolincha = self.check_cache_ip(params[3])
+                                        if params[3] == FAKE_IP:
+                                            print 'Mensaje recibido de ' + params[2] + \
+                                                  ': ' + params[4]
+                                        else:
+                                            dir_bolincha = self.check_cache_ip(params[3])
+                                            if dir_bolincha:
+                                                ip_bolincha = dir_bolincha[1]
+                                                port = int(dir_bolincha[2])
+                                                dir_fisica_dest = dir_bolincha[0]
 
-                                        if dir_bolincha:
-                                            ip_bolincha = dir_bolincha[1]
-                                            port = int(dir_bolincha[2])
-                                            dir_fisica_dest = dir_bolincha[0]
-
-                                            # Da formato de mensaje en bolinchas =
-                                            # dir_fisica_fuente ; dir_fisica_dest ; ip_inicio ; ip_final ; msg
-                                            msg_final = DIR_FISICA + ";" + dir_fisica_dest + ";" \
-                                                        + params[2] + ";" + params[3] + ";" + params[4]
-                                            print("El msj en bolinchas seria:")
-                                            print(msg_final)
-                                            self.send_to_bolinchas(msg_final, ip_bolincha, port)
+                                                # Da formato de mensaje en bolinchas =
+                                                # dir_fisica_fuente ; dir_fisica_dest ; ip_inicio ; ip_final ; msg
+                                                msg_final = DIR_FISICA + ";" + dir_fisica_dest + ";" \
+                                                            + params[2] + ";" + params[3] + ";" + params[4]
+                                                print("El msj en bolinchas seria:")
+                                                print(msg_final)
+                                                self.send_to_bolinchas(msg_final, ip_bolincha, port)
 
                                     else:
                                         # Construye el mensaje en un formato que pueda interpretar paletas
